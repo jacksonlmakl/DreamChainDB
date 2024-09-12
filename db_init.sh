@@ -1,15 +1,23 @@
 #!/bin/bash
 
-# Ensure jq (JSON parser) is installed to read the config file and PostgreSQL is installed
 sudo apt-get update
-sudo apt-get install -y jq postgresql postgresql-contrib
+sudo apt-get install -y  postgresql postgresql-contrib
 
-# Load the password from the config.json file
-CONFIG_FILE="config.json"
-DB_PASSWORD=$(jq -r '.db_password' $CONFIG_FILE)
+# Load the configuration from the config.env file
+CONFIG_FILE="config.env"
 
-if [ -z "$DB_PASSWORD" ]; then
-    echo "Error: Password not found in $CONFIG_FILE."
+# Ensure config.env file exists
+if [ ! -f "$CONFIG_FILE" ]; then
+    echo "Error: $CONFIG_FILE not found."
+    exit 1
+fi
+
+source "$CONFIG_FILE"
+
+
+# Ensure DB_USER, DB_PASSWORD, and DB_NAME are present
+if [ -z "$DB_USER" ] || [ -z "$DB_PASSWORD" ] || [ -z "$DB_NAME" ]; then
+    echo "Error: One or more required environment variables (DB_USER, DB_PASSWORD, DB_NAME) are missing in $CONFIG_FILE."
     exit 1
 fi
 
@@ -17,55 +25,22 @@ fi
 sudo systemctl start postgresql
 sudo systemctl enable postgresql
 
-# Use sudo to log in as the PostgreSQL superuser and execute the necessary SQL commands
-sudo -u postgres psql << EOF
-
--- Create the user 'jackson' with the password from config.json, if it doesn't exist
-DO \$\$
-BEGIN
-    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'jackson') THEN
-        CREATE USER jackson WITH PASSWORD '$DB_PASSWORD';
-        ALTER USER jackson WITH SUPERUSER;
-    END IF;
-END
-\$\$;
-
+sudo -u postgres psql <<EOF
+CREATE USER $DB_USER WITH PASSWORD '$DB_PASSWORD';
 EOF
 
-# Create the 'dreamchain' database owned by 'jackson' if it doesn't exist
-sudo -u postgres createdb -O jackson dreamchain
-
-# Create the 'licenses' schema in the 'dreamchain' database
-sudo -u postgres psql -d dreamchain << EOF
-
--- Create the 'licenses' schema if it doesn't exist
-DO \$\$
-BEGIN
-    IF NOT EXISTS (SELECT schema_name FROM information_schema.schemata WHERE schema_name = 'licenses') THEN
-        CREATE SCHEMA licenses;
-    END IF;
-END
-\$\$;
-
+sudo -u postgres psql <<EOF
+CREATE DATABASE "$DB_NAME" OWNER $DB_USER;
 EOF
 
-# Modify the pg_hba.conf file to use md5 authentication for all local connections
-PG_HBA_FILE="/etc/postgresql/14/main/pg_hba.conf"  # Adjust version if necessary
+sudo -u postgres psql <<EOF
+CREATE SCHEMA "$DB_NAME"."LICENSE";
+EOF
 
-# Backup the original pg_hba.conf file
-sudo cp $PG_HBA_FILE ${PG_HBA_FILE}.bak
+sudo -u postgres psql <<EOF
+GRANT OWNERSHIP ON SCHEMA "$DB_NAME"."LICENSE" TO USER $DB_USER;
+EOF
 
-# Replace all instances of 'peer' authentication with 'md5' for local connections
-sudo sed -i "s/local\s*all\s*all\s*peer/local   all   all   md5/" $PG_HBA_FILE
-
-# Restart PostgreSQL to apply changes
 sudo systemctl restart postgresql
-
-# Success message
-echo "PostgreSQL installed and configured successfully!"
-echo "Admin account 'jackson' created with the password from config.json."
-echo "Database 'dreamchain' and schema 'licenses' created."
-echo "Authentication method updated to md5 for all users."
-
-# Verify PostgreSQL service status
 sudo systemctl status postgresql
+
