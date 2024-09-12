@@ -36,7 +36,5 @@ sudo systemctl restart postgresql
 # Show PostgreSQL service status
 sudo systemctl status postgresql
 
-# Connect to the database using the created user
-psql -h localhost -U postgres -d "$DB_NAME" -W "$DB_PASSWORD"
 
 # Now you can execute SQL commands within the database
